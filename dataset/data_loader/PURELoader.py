@@ -97,18 +97,46 @@ class PURELoader(BaseLoader):
 
         return data_dirs_new
 
+    # def preprocess_dataset_subprocess(self, data_dirs, config_preprocess, i, file_list_dict):
+    #     """ Invoked by preprocess_dataset for multi_process. """
+    #     filename = os.path.split(data_dirs[i]['path'])[-1]
+    #     saved_filename = data_dirs[i]['index']
+
+    #     # Read Frames
+    #     if 'None' in config_preprocess.DATA_AUG:
+    #         # Utilize dataset-specific function to read video
+    #         frames = self.read_video(
+    #             os.path.join(data_dirs[i]['path'], filename, ""))
+    #     elif 'Motion' in config_preprocess.DATA_AUG:
+    #         # Utilize general function to read video in .npy format
+    #         frames = self.read_npy_video(
+    #             glob.glob(os.path.join(data_dirs[i]['path'], filename, '*.npy')))
+    #     else:
+    #         raise ValueError(f'Unsupported DATA_AUG specified for {self.dataset_name} dataset! Received {config_preprocess.DATA_AUG}.')
+
+    #     # Read Labels
+    #     if config_preprocess.USE_PSUEDO_PPG_LABEL:
+    #         bvps = self.generate_pos_psuedo_labels(frames, fs=self.config_data.FS)
+    #     else:
+    #         bvps = self.read_wave(
+    #             os.path.join(data_dirs[i]['path'], "{0}.json".format(filename)))
+
+    #     target_length = frames.shape[0]
+    #     bvps = BaseLoader.resample_ppg(bvps, target_length)
+    #     frames_clips, bvps_clips = self.preprocess(frames, bvps, config_preprocess)
+    #     input_name_list, label_name_list = self.save_multi_process(frames_clips, bvps_clips, saved_filename)
+    #     file_list_dict[i] = input_name_list
+    
     def preprocess_dataset_subprocess(self, data_dirs, config_preprocess, i, file_list_dict):
-        """ Invoked by preprocess_dataset for multi_process. """
+        """Invoked by preprocess_dataset for multi_process."""
         filename = os.path.split(data_dirs[i]['path'])[-1]
         saved_filename = data_dirs[i]['index']
 
         # Read Frames
         if 'None' in config_preprocess.DATA_AUG:
-            # Utilize dataset-specific function to read video
             frames = self.read_video(
                 os.path.join(data_dirs[i]['path'], filename, ""))
         elif 'Motion' in config_preprocess.DATA_AUG:
-            # Utilize general function to read video in .npy format
             frames = self.read_npy_video(
                 glob.glob(os.path.join(data_dirs[i]['path'], filename, '*.npy')))
         else:
@@ -117,15 +145,32 @@ class PURELoader(BaseLoader):
         # Read Labels
         if config_preprocess.USE_PSUEDO_PPG_LABEL:
             bvps = self.generate_pos_psuedo_labels(frames, fs=self.config_data.FS)
+            # Create default SPO2 values for pseudo labels
+            spo2_values = np.ones_like(bvps) * 98  # Default healthy SPO2 value
         else:
-            bvps = self.read_wave(
+            bvps, spo2_values = self.read_wave(
                 os.path.join(data_dirs[i]['path'], "{0}.json".format(filename)))
 
+        # Resample both signals to match frame count
         target_length = frames.shape[0]
         bvps = BaseLoader.resample_ppg(bvps, target_length)
+        spo2_values = BaseLoader.resample_ppg(spo2_values, target_length)
+        
+        # Preprocess frames and BVP signals
         frames_clips, bvps_clips = self.preprocess(frames, bvps, config_preprocess)
-        input_name_list, label_name_list = self.save_multi_process(frames_clips, bvps_clips, saved_filename)
+        
+        # Chunk SPO2 values to match frame chunks
+        if config_preprocess.DO_CHUNK:
+            _, spo2_clips = self.chunk(frames, spo2_values, config_preprocess.CHUNK_LENGTH)
+        else:
+            spo2_clips = np.array([spo2_values])
+        
+        # Save all data
+        input_name_list, label_name_list, spo2_name_list = self.save_multi_process(
+            frames_clips, bvps_clips, saved_filename, spo2_clips=spo2_clips)
+        
         file_list_dict[i] = input_name_list
+
 
     @staticmethod
     def read_video(video_file):
@@ -138,11 +183,24 @@ class PURELoader(BaseLoader):
             frames.append(img)
         return np.asarray(frames)
 
+    # @staticmethod
+    # def read_wave(bvp_file):
+    #     """Reads a bvp signal file."""
+    #     with open(bvp_file, "r") as f:
+    #         labels = json.load(f)
+    #         waves = [label["Value"]["waveform"]
+    #                  for label in labels["/FullPackage"]]
+    #     return np.asarray(waves)
     @staticmethod
     def read_wave(bvp_file):
-        """Reads a bvp signal file."""
+        """Reads a bvp signal file and SPO2 values."""
         with open(bvp_file, "r") as f:
             labels = json.load(f)
             waves = [label["Value"]["waveform"]
-                     for label in labels["/FullPackage"]]
-        return np.asarray(waves)
+                    for label in labels["/FullPackage"]]
+            # Extract SPO2 values from the same JSON structure
+            # Adjust the key name if SPO2 is stored differently in your JSON
+            spo2_values = [label["Value"]["o2saturation"]
+                        for label in labels["/FullPackage"]]
+        return np.asarray(waves), np.asarray(spo2_values)
+

@@ -135,6 +135,70 @@ class DeepPhysTrainer(BaseTrainer):
             valid_loss = np.asarray(valid_loss)
         return np.mean(valid_loss)
 
+    # def test(self, data_loader):
+    #     """ Model evaluation on the testing dataset."""
+    #     if data_loader["test"] is None:
+    #         raise ValueError("No data for test")
+    #     config = self.config
+        
+    #     print('')
+    #     print("===Testing===")
+
+    #     # Change chunk length to be test chunk length
+    #     self.chunk_len = self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH
+
+    #     predictions = dict()
+    #     labels = dict()
+    #     if self.config.TOOLBOX_MODE == "only_test":
+    #         if not os.path.exists(self.config.INFERENCE.MODEL_PATH):
+    #             raise ValueError("Inference model path error! Please check INFERENCE.MODEL_PATH in your yaml.")
+    #         self.model.load_state_dict(torch.load(self.config.INFERENCE.MODEL_PATH))
+    #         print("Testing uses pretrained model!")
+    #     else:
+    #         if self.config.TEST.USE_LAST_EPOCH:
+    #             last_epoch_model_path = os.path.join(
+    #             self.model_dir, self.model_file_name + '_Epoch' + str(self.max_epoch_num - 1) + '.pth')
+    #             print("Testing uses last epoch as non-pretrained model!")
+    #             print(last_epoch_model_path)
+    #             self.model.load_state_dict(torch.load(last_epoch_model_path))
+    #         else:
+    #             best_model_path = os.path.join(
+    #                 self.model_dir, self.model_file_name + '_Epoch' + str(self.best_epoch) + '.pth')
+    #             print("Testing uses best epoch selected using model selection as non-pretrained model!")
+    #             print(best_model_path)
+    #             self.model.load_state_dict(torch.load(best_model_path))
+
+    #     self.model = self.model.to(self.config.DEVICE)
+    #     self.model.eval()
+    #     print("Running model evaluation on the testing dataset!")
+    #     with torch.no_grad():
+    #         for _, test_batch in enumerate(tqdm(data_loader["test"], ncols=80)):
+    #             batch_size = test_batch[0].shape[0]
+    #             data_test, labels_test = test_batch[0].to(
+    #                 self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+    #             N, D, C, H, W = data_test.shape
+    #             data_test = data_test.view(N * D, C, H, W)
+    #             labels_test = labels_test.view(-1, 1)
+    #             pred_ppg_test = self.model(data_test)
+
+    #             if self.config.TEST.OUTPUT_SAVE_DIR:
+    #                 labels_test = labels_test.cpu()
+    #                 pred_ppg_test = pred_ppg_test.cpu()
+
+    #             for idx in range(batch_size):
+    #                 subj_index = test_batch[2][idx]
+    #                 sort_index = int(test_batch[3][idx])
+    #                 if subj_index not in predictions.keys():
+    #                     predictions[subj_index] = dict()
+    #                     labels[subj_index] = dict()
+    #                 predictions[subj_index][sort_index] = pred_ppg_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
+    #                 labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
+        
+    #     print('')
+    #     calculate_metrics(predictions, labels, self.config)
+    #     if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
+    #         self.save_test_outputs(predictions, labels, self.config)
+
     def test(self, data_loader):
         """ Model evaluation on the testing dataset."""
         if data_loader["test"] is None:
@@ -149,6 +213,8 @@ class DeepPhysTrainer(BaseTrainer):
 
         predictions = dict()
         labels = dict()
+        spo2_labels = dict()  # New dict to store SPO2 values
+        
         if self.config.TOOLBOX_MODE == "only_test":
             if not os.path.exists(self.config.INFERENCE.MODEL_PATH):
                 raise ValueError("Inference model path error! Please check INFERENCE.MODEL_PATH in your yaml.")
@@ -174,30 +240,49 @@ class DeepPhysTrainer(BaseTrainer):
         with torch.no_grad():
             for _, test_batch in enumerate(tqdm(data_loader["test"], ncols=80)):
                 batch_size = test_batch[0].shape[0]
-                data_test, labels_test = test_batch[0].to(
-                    self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+                
+                # Unpack the test_batch with the new structure
+                data_test, labels_test, spo2_test, subj_indices, sort_indices = (
+                    test_batch[0].to(self.config.DEVICE),  # data
+                    test_batch[1].to(self.config.DEVICE),  # ppg labels
+                    test_batch[2].to(self.config.DEVICE),  # spo2 labels (new)
+                    test_batch[3],                         # filenames (shifted)
+                    test_batch[4]                          # chunk_ids (shifted)
+                )
+                
                 N, D, C, H, W = data_test.shape
                 data_test = data_test.view(N * D, C, H, W)
                 labels_test = labels_test.view(-1, 1)
+                spo2_test = spo2_test.view(-1, 1)  # Reshape SPO2 data
+                
                 pred_ppg_test = self.model(data_test)
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:
                     labels_test = labels_test.cpu()
                     pred_ppg_test = pred_ppg_test.cpu()
+                    spo2_test = spo2_test.cpu()  # Move SPO2 data to CPU if needed
 
                 for idx in range(batch_size):
-                    subj_index = test_batch[2][idx]
-                    sort_index = int(test_batch[3][idx])
+                    subj_index = subj_indices[idx]
+                    sort_index = int(sort_indices[idx])
+                    
                     if subj_index not in predictions.keys():
                         predictions[subj_index] = dict()
                         labels[subj_index] = dict()
+                        spo2_labels[subj_index] = dict()  # Initialize SPO2 dict for this subject
+                    
+                    # Store predictions and PPG labels as before
                     predictions[subj_index][sort_index] = pred_ppg_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
                     labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
+                    
+                    # Store SPO2 labels separately
+                    spo2_labels[subj_index][sort_index] = spo2_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
         
         print('')
         calculate_metrics(predictions, labels, self.config)
-        if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
-            self.save_test_outputs(predictions, labels, self.config)
+        if self.config.TEST.OUTPUT_SAVE_DIR:  # saving test outputs
+            self.save_test_outputs(predictions, labels, self.config, spo2_labels=spo2_labels)
+
 
     def save_model(self, index):
         """Inits parameters from args and the writer for TensorboardX."""

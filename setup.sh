@@ -12,13 +12,21 @@ MODE=$1
 conda_setup() {
     echo "Setting up using conda..."
     conda remove --name rppg-toolbox --all -y || exit 1
-    conda create -n rppg-toolbox python=3.8 -y || exit 1
+    echo  "Done 1"
+    conda create -n rppg-toolbox python=3.9 -y || exit 1
+    echo  "Done 2"
     source "$(conda info --base)/etc/profile.d/conda.sh" || exit 1
+    echo  "Done 3"
     conda activate rppg-toolbox || exit 1
+    echo  "Done 4"
     pip install torch==2.1.2+cu121 torchvision==0.16.2+cu121 torchaudio==2.1.2+cu121 --index-url https://download.pytorch.org/whl/cu121
+    echo  "Done 5"
     pip install -r requirements.txt || exit 1
+    echo  "Done 6"
     cd tools/mamba || exit 1
+    echo  "Done 7"
     python setup.py install || exit 1
+    echo  "Done 8"
 }
 
 # Function to set up using uv

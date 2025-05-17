@@ -26,8 +26,42 @@ class BaseTrainer:
     def test(self):
         pass
 
-    def save_test_outputs(self, predictions, labels, config):
+    # def save_test_outputs(self, predictions, labels, config):
     
+    #     output_dir = config.TEST.OUTPUT_SAVE_DIR
+    #     if not os.path.exists(output_dir):
+    #         os.makedirs(output_dir, exist_ok=True)
+        
+    #     # Filename ID to be used in any output files that get saved
+    #     if config.TOOLBOX_MODE == 'train_and_test':
+    #         filename_id = self.model_file_name
+    #     elif config.TOOLBOX_MODE == 'only_test':
+    #         model_file_root = config.INFERENCE.MODEL_PATH.split("/")[-1].split(".pth")[0]
+    #         filename_id = model_file_root + "_" + config.TEST.DATA.DATASET
+    #     else:
+    #         raise ValueError('Metrics.py evaluation only supports train_and_test and only_test!')
+    #     output_path = os.path.join(output_dir, filename_id + '_outputs.pickle')
+
+    #     data = dict()
+    #     data['predictions'] = predictions
+    #     data['labels'] = labels
+    #     data['label_type'] = config.TEST.DATA.PREPROCESS.LABEL_TYPE
+    #     data['fs'] = config.TEST.DATA.FS
+
+    #     with open(output_path, 'wb') as handle: # save out frame dict pickle file
+    #         pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    #     print('Saving outputs to:', output_path)
+
+    def save_test_outputs(self, predictions, labels, config, spo2_labels=None):
+        """Saves the test outputs to a file.
+        
+        Args:
+            predictions: Dictionary containing model predictions for PPG signals
+            labels: Dictionary containing ground truth PPG labels
+            config: Configuration object
+            spo2_labels: Optional dictionary containing SPO2 labels
+        """
         output_dir = config.TEST.OUTPUT_SAVE_DIR
         if not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
@@ -47,11 +81,15 @@ class BaseTrainer:
         data['labels'] = labels
         data['label_type'] = config.TEST.DATA.PREPROCESS.LABEL_TYPE
         data['fs'] = config.TEST.DATA.FS
+        
+        # Include SPO2 labels if provided
+        if spo2_labels is not None:
+            data['spo2_labels'] = spo2_labels
 
         with open(output_path, 'wb') as handle: # save out frame dict pickle file
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        print('Saving outputs to:', output_path)
+
 
     def plot_losses_and_lrs(self, train_loss, valid_loss, lrs, config):
 

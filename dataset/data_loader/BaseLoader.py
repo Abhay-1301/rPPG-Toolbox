@@ -59,6 +59,7 @@ class BaseLoader(Dataset):
         """
         self.inputs = list()
         self.labels = list()
+        self.spo2_labels = list()  # Initialize SPO2 labels list
         self.dataset_name = dataset_name
         self.raw_data_path = raw_data_path
         self.cached_path = config_data.CACHED_PATH
@@ -99,10 +100,42 @@ class BaseLoader(Dataset):
         """Returns the length of the dataset."""
         return len(self.inputs)
 
+    # def __getitem__(self, index):
+    #     """Returns a clip of video(3,T,W,H) and it's corresponding signals(T)."""
+    #     data = np.load(self.inputs[index])
+    #     label = np.load(self.labels[index])
+    #     if self.data_format == 'NDCHW':
+    #         data = np.transpose(data, (0, 3, 1, 2))
+    #     elif self.data_format == 'NCDHW':
+    #         data = np.transpose(data, (3, 0, 1, 2))
+    #     elif self.data_format == 'NDHWC':
+    #         pass
+    #     else:
+    #         raise ValueError('Unsupported Data Format!')
+    #     data = np.float32(data)
+    #     label = np.float32(label)
+    #     # item_path is the location of a specific clip in a preprocessing output folder
+    #     # For example, an item path could be /home/data/PURE_SizeW72_...unsupervised/501_input0.npy
+    #     item_path = self.inputs[index]
+    #     # item_path_filename is simply the filename of the specific clip
+    #     # For example, the preceding item_path's filename would be 501_input0.npy
+    #     item_path_filename = item_path.split(os.sep)[-1]
+    #     # split_idx represents the point in the previous filename where we want to split the string 
+    #     # in order to retrieve a more precise filename (e.g., 501) preceding the chunk (e.g., input0)
+    #     split_idx = item_path_filename.rindex('_')
+    #     # Following the previous comments, the filename for example would be 501
+    #     filename = item_path_filename[:split_idx]
+    #     # chunk_id is the extracted, numeric chunk identifier. Following the previous comments, 
+    #     # the chunk_id for example would be 0
+    #     chunk_id = item_path_filename[split_idx + 6:].split('.')[0]
+    #     return data, label, filename, chunk_id
+
     def __getitem__(self, index):
         """Returns a clip of video(3,T,W,H) and it's corresponding signals(T)."""
         data = np.load(self.inputs[index])
         label = np.load(self.labels[index])
+        spo2_label = np.load(self.spo2_labels[index])  # Load SPO2 label
+        
         if self.data_format == 'NDCHW':
             data = np.transpose(data, (0, 3, 1, 2))
         elif self.data_format == 'NCDHW':
@@ -111,23 +144,20 @@ class BaseLoader(Dataset):
             pass
         else:
             raise ValueError('Unsupported Data Format!')
+        
         data = np.float32(data)
         label = np.float32(label)
-        # item_path is the location of a specific clip in a preprocessing output folder
-        # For example, an item path could be /home/data/PURE_SizeW72_...unsupervised/501_input0.npy
+        spo2_label = np.float32(spo2_label)
+        
+        # Extract filename and chunk_id information
         item_path = self.inputs[index]
-        # item_path_filename is simply the filename of the specific clip
-        # For example, the preceding item_path's filename would be 501_input0.npy
         item_path_filename = item_path.split(os.sep)[-1]
-        # split_idx represents the point in the previous filename where we want to split the string 
-        # in order to retrieve a more precise filename (e.g., 501) preceding the chunk (e.g., input0)
         split_idx = item_path_filename.rindex('_')
-        # Following the previous comments, the filename for example would be 501
         filename = item_path_filename[:split_idx]
-        # chunk_id is the extracted, numeric chunk identifier. Following the previous comments, 
-        # the chunk_id for example would be 0
         chunk_id = item_path_filename[split_idx + 6:].split('.')[0]
-        return data, label, filename, chunk_id
+        
+        return data, label, spo2_label, filename, chunk_id
+
 
     def get_raw_data(self, raw_data_path):
         """Returns raw data directories under the path.
@@ -488,22 +518,52 @@ class BaseLoader(Dataset):
             count += 1
         return count
 
-    def save_multi_process(self, frames_clips, bvps_clips, filename):
+    # def save_multi_process(self, frames_clips, bvps_clips, filename):
+    #     """Save all the chunked data with multi-thread processing.
+
+    #     Args:
+    #         frames_clips(np.array): blood volumne pulse (PPG) labels.
+    #         bvps_clips(np.array): the length of each chunk.
+    #         filename: name the filename
+    #     Returns:
+    #         input_path_name_list: list of input path names
+    #         label_path_name_list: list of label path names
+    #     """
+    #     if not os.path.exists(self.cached_path):
+    #         os.makedirs(self.cached_path, exist_ok=True)
+    #     count = 0
+    #     input_path_name_list = []
+    #     label_path_name_list = []
+    #     for i in range(len(bvps_clips)):
+    #         assert (len(self.inputs) == len(self.labels))
+    #         input_path_name = self.cached_path + os.sep + "{0}_input{1}.npy".format(filename, str(count))
+    #         label_path_name = self.cached_path + os.sep + "{0}_label{1}.npy".format(filename, str(count))
+    #         input_path_name_list.append(input_path_name)
+    #         label_path_name_list.append(label_path_name)
+    #         np.save(input_path_name, frames_clips[i])
+    #         np.save(label_path_name, bvps_clips[i])
+    #         count += 1
+    #     return input_path_name_list, label_path_name_list
+
+    def save_multi_process(self, frames_clips, bvps_clips, filename, spo2_clips=None):
         """Save all the chunked data with multi-thread processing.
 
         Args:
             frames_clips(np.array): blood volumne pulse (PPG) labels.
             bvps_clips(np.array): the length of each chunk.
             filename: name the filename
+            spo2_clips(np.array, optional): SPO2 values for each chunk.
         Returns:
             input_path_name_list: list of input path names
             label_path_name_list: list of label path names
+            spo2_path_name_list: list of SPO2 label path names (if spo2_clips is provided)
         """
         if not os.path.exists(self.cached_path):
             os.makedirs(self.cached_path, exist_ok=True)
         count = 0
         input_path_name_list = []
         label_path_name_list = []
+        spo2_path_name_list = []
         for i in range(len(bvps_clips)):
             assert (len(self.inputs) == len(self.labels))
             input_path_name = self.cached_path + os.sep + "{0}_input{1}.npy".format(filename, str(count))
@@ -512,8 +572,19 @@ class BaseLoader(Dataset):
             label_path_name_list.append(label_path_name)
             np.save(input_path_name, frames_clips[i])
             np.save(label_path_name, bvps_clips[i])
+            
+            # Save SPO2 data if provided
+            if spo2_clips is not None:
+                spo2_path_name = self.cached_path + os.sep + "{0}_spo2{1}.npy".format(filename, str(count))
+                spo2_path_name_list.append(spo2_path_name)
+                np.save(spo2_path_name, spo2_clips[i])
             count += 1
-        return input_path_name_list, label_path_name_list
+        
+        if spo2_clips is not None:
+            return input_path_name_list, label_path_name_list, spo2_path_name_list
+        else:
+            return input_path_name_list, label_path_name_list
+
 
     def multi_process_manager(self, data_dirs, config_preprocess, multi_process_quota=8):
         """Allocate dataset preprocessing across multiple processes.
@@ -619,24 +690,40 @@ class BaseLoader(Dataset):
         os.makedirs(os.path.dirname(self.file_list_path), exist_ok=True)
         file_list_df.to_csv(self.file_list_path)  # save file list to .csv
 
-    def load_preprocessed_data(self):
-        """ Loads the preprocessed data listed in the file list.
+    # def load_preprocessed_data(self):
+    #     """ Loads the preprocessed data listed in the file list.
 
-        Args:
-            None
-        Returns:
-            None
-        """
-        file_list_path = self.file_list_path  # get list of files in
+    #     Args:
+    #         None
+    #     Returns:
+    #         None
+    #     """
+    #     file_list_path = self.file_list_path  # get list of files in
+    #     file_list_df = pd.read_csv(file_list_path)
+    #     inputs = file_list_df['input_files'].tolist()
+    #     if not inputs:
+    #         raise ValueError(self.dataset_name + ' dataset loading data error!')
+    #     inputs = sorted(inputs)  # sort input file name list
+    #     labels = [input_file.replace("input", "label") for input_file in inputs]
+    #     self.inputs = inputs
+    #     self.labels = labels
+    #     self.preprocessed_data_len = len(inputs)
+
+    def load_preprocessed_data(self):
+        """Loads the preprocessed data listed in the file list."""
+        file_list_path = self.file_list_path
         file_list_df = pd.read_csv(file_list_path)
         inputs = file_list_df['input_files'].tolist()
         if not inputs:
             raise ValueError(self.dataset_name + ' dataset loading data error!')
         inputs = sorted(inputs)  # sort input file name list
         labels = [input_file.replace("input", "label") for input_file in inputs]
+        spo2_labels = [input_file.replace("input", "spo2") for input_file in inputs]
         self.inputs = inputs
         self.labels = labels
+        self.spo2_labels = spo2_labels  # Store SPO2 label paths
         self.preprocessed_data_len = len(inputs)
+
 
     @staticmethod
     def diff_normalize_data(data):
